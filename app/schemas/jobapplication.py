@@ -1,73 +1,56 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 from datetime import date, datetime
 from typing import Optional, List
 
 
-# ---------------- EXPERIENCE ----------------
-class Experience(BaseModel):
+# ---------- EDUCATION ----------
+class EducationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    previous_company: str
-    previous_role: str
-    date_of_joining: date
-    relieving_date: date
-
-
-# ---------------- BASE ----------------
-class ApplicationBase(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    job_id: int
-    first_name: str
-    last_name: str
-    phone: str
-    email: str
-    date_of_birth: date
-    gender: str
-    location: str
-    pan_number: str
-    linkedin_url: Optional[str] = None
-
+    id: int
     highest_qualification: str
     specialization: str
     university: str
     college: str
     year_of_passing: int
 
+
+# ---------- EXPERIENCE ----------
+class ExperienceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    previous_company: str
+    previous_role: str
+    date_of_joining: date
+    relieving_date: date
+
+
+# ---------- APPLICATION RESPONSE ----------
+class ApplicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+
+    first_name: str
+    last_name: str
+    full_name: str
+
+    phone: str
+    email: str
+    date_of_birth: date
+    gender: str
+    location: str
+    pan_number: str
+    linkedin_url: Optional[str]
+
     position_applied: str
     preferred_work_mode: str
     key_skills: str
     expected_salary: int
     why_hire_me: str
-
     experience_level: str
-    experience: Optional[List[Experience]] = None
-
-    # VALIDATION
-    @field_validator("experience")
-    @classmethod
-    def validate_experience(cls, v, info):
-        if info.data.get("experience_level") == "experienced":
-            if not v or len(v) == 0:
-                raise ValueError("Experienced candidate must add at least one company")
-        return v
-
-
-# ---------------- CREATE ----------------
-class ApplicationCreate(ApplicationBase):
-    pass
-
-
-# ---------------- RESPONSE EXPERIENCE ----------------
-class ExperienceResponse(Experience):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-
-
-# ---------------- RESPONSE ----------------
-class ApplicationResponse(ApplicationBase):
-    id: int
-    full_name: str
 
     pan_card_file: Optional[str]
     resume_file: Optional[str]
@@ -76,4 +59,6 @@ class ApplicationResponse(ApplicationBase):
     status: str
     created_at: datetime
 
-    experiences: Optional[List[ExperienceResponse]]
+    # ONLY DB RELATIONSHIPS
+    educations: List[EducationResponse] = []
+    experiences: List[ExperienceResponse] = []

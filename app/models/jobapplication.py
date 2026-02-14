@@ -23,11 +23,7 @@ class Application(Base):
     pan_number = Column(String(20))
     linkedin_url = Column(String(255))
 
-    highest_qualification = Column(String(100))
-    specialization = Column(String(100))
-    university = Column(String(150))
-    college = Column(String(150))
-    year_of_passing = Column(Integer)
+
 
     position_applied = Column(String(100))
     preferred_work_mode = Column(String(50))
@@ -44,12 +40,31 @@ class Application(Base):
     status = Column(String(50), default="Pending")
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # ✅ CORRECT RELATIONSHIP NAME
+    educations = relationship(
+        "ApplicationEducation",
+        back_populates="application",
+        cascade="all, delete-orphan"
+    )
+
     experiences = relationship(
         "ApplicationExperience",
         back_populates="application",
         cascade="all, delete-orphan"
     )
+
+class ApplicationEducation(Base):
+    __tablename__ = "application_education"
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"))
+
+    highest_qualification = Column(String(100))
+    specialization = Column(String(100))
+    university = Column(String(150))
+    college = Column(String(150))
+    year_of_passing = Column(Integer)
+
+    application = relationship("Application", back_populates="educations")
 
 
 class ApplicationExperience(Base):
@@ -63,6 +78,4 @@ class ApplicationExperience(Base):
     date_of_joining = Column(Date)
     relieving_date = Column(Date)
 
-    # ✅ MUST MATCH ABOVE
     application = relationship("Application", back_populates="experiences")
-

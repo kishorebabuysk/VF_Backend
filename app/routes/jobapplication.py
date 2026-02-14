@@ -10,7 +10,7 @@ import os
 import json
 
 from app.database import get_db
-from app.models.jobapplication import Application, ApplicationExperience
+from app.models.jobapplication import Application, ApplicationExperience, ApplicationEducation
 from app.schemas.jobapplication import ApplicationResponse
 from app.utils.jwt_dependency import get_current_admin
 from app.utils.file_upload import save_upload_file
@@ -37,11 +37,7 @@ async def apply_job(
     pan_number: str = Form(...),
     linkedin_url: Optional[str] = Form(None),
 
-    highest_qualification: str = Form(...),
-    specialization: str = Form(...),
-    university: str = Form(...),
-    college: str = Form(...),
-    year_of_passing: int = Form(...),
+    educations: str = Form(...),
 
     position_applied: str = Form(...),
     preferred_work_mode: str = Form(...),
@@ -50,9 +46,7 @@ async def apply_job(
     why_hire_me: str = Form(...),
 
     experience_level: str = Form(...),
-
     experience: Optional[str] = Form(None),
-
 
     pan_card: UploadFile = File(...),
     resume: UploadFile = File(...),
@@ -63,7 +57,6 @@ async def apply_job(
 
     full_name = f"{first_name.strip()} {last_name.strip()}"
 
-    # SAVE FILES
     pan_card_path = save_upload_file(UPLOAD_DIR, pan_card)
     resume_path = save_upload_file(UPLOAD_DIR, resume)
     photo_path = save_upload_file(UPLOAD_DIR, photo)
@@ -80,11 +73,6 @@ async def apply_job(
         location=location,
         pan_number=pan_number,
         linkedin_url=linkedin_url,
-        highest_qualification=highest_qualification,
-        specialization=specialization,
-        university=university,
-        college=college,
-        year_of_passing=year_of_passing,
         position_applied=position_applied,
         preferred_work_mode=preferred_work_mode,
         key_skills=key_skills,
@@ -96,17 +84,51 @@ async def apply_job(
         photo_file=photo_path,
     )
 
-    # EXPERIENCE INSERT
+    # ---------------- EDUCATION ----------------
+    try:
+        edu_list = json.loads(educations)
+        if len(edu_list) == 0:
+            raise HTTPException(422, "At least one education required")
+
+        seen_edu = set()
+        for edu in edu_list:
+            key = (
+                edu["highest_qualification"].strip().lower(),
+                edu["specialization"].strip().lower(),
+                edu["university"].strip().lower(),
+                edu["college"].strip().lower(),
+                int(edu["year_of_passing"]),
+            )
+            if key in seen_edu:
+                continue
+            seen_edu.add(key)
+
+            db_application.educations.append(ApplicationEducation(**edu))
+
+    except Exception as e:
+        raise HTTPException(400, f"Invalid education format: {str(e)}")
+
+    # ---------------- EXPERIENCE ----------------
     if experience:
         try:
             exp_list = json.loads(experience)
 
-            if experience_level == "experienced" and len(exp_list) == 0:
+            if experience_level.lower() == "experienced" and len(exp_list) == 0:
                 raise HTTPException(422, "Experience required")
 
+            seen_exp = set()
             for exp in exp_list:
                 doj = datetime.strptime(exp["date_of_joining"], "%Y-%m-%d").date()
                 rd = datetime.strptime(exp["relieving_date"], "%Y-%m-%d").date()
+
+                key = (
+                    exp["previous_company"].strip().lower(),
+                    exp["previous_role"].strip().lower(),
+                    doj, rd
+                )
+                if key in seen_exp:
+                    continue
+                seen_exp.add(key)
 
                 db_application.experiences.append(
                     ApplicationExperience(
@@ -120,18 +142,17 @@ async def apply_job(
         except Exception as e:
             raise HTTPException(400, f"Invalid experience format: {str(e)}")
 
-    elif experience_level == "experienced":
+    elif experience_level.lower() == "experienced":
         raise HTTPException(422, "Experience required for experienced candidate")
 
     db.add(db_application)
     db.commit()
     db.refresh(db_application)
-
     return db_application
 
 
 # =========================================================
-# GET ALL APPLICATIONS (PAGINATED)
+# GET ALL APPLICATIONS
 # =========================================================
 @router.get("/getall", response_model=List[ApplicationResponse])
 async def get_all_applications(
@@ -140,9 +161,12 @@ async def get_all_applications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin),
 ):
-    applications = (
+    return (
         db.query(Application)
-        .options(selectinload(Application.experiences))   # ← closed properly
+        .options(
+            selectinload(Application.experiences),
+            selectinload(Application.educations)
+        )
         .offset(skip)
         .limit(limit)
         .all()
@@ -226,7 +250,10 @@ async def get_application(
 ):
     application = (
         db.query(Application)
-        .options(selectinload(Application.experiences))
+        .options(
+            selectinload(Application.experiences),
+            selectinload(Application.educations)
+        )
         .filter(Application.id == application_id)
         .first()
     )
@@ -247,14 +274,12 @@ async def update_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin),
 ):
-
     application = db.query(Application).filter(Application.id == application_id).first()
     if not application:
         raise HTTPException(404, "Application not found")
 
     old_status = application.status
     application.status = status
-
     db.commit()
     db.refresh(application)
 
@@ -267,7 +292,7 @@ async def update_status(
 
 
 # =========================================================
-# DELETE SINGLE
+# DELETE
 # =========================================================
 @router.delete("/{application_id}")
 async def delete_application(
@@ -276,15 +301,13 @@ async def delete_application(
     current_user: User = Depends(get_current_admin),
 ):
     application = db.query(Application).filter(Application.id == application_id).first()
-
     if not application:
         raise HTTPException(404, "Application not found")
 
-    # DELETE FILES
     for field in ["pan_card_file", "resume_file", "photo_file"]:
-        file_path = getattr(application, field)
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
+        path = getattr(application, field)
+        if path and os.path.exists(path):
+            os.remove(path)
 
     db.delete(application)
     db.commit()
