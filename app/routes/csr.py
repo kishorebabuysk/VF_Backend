@@ -1,211 +1,197 @@
-import os
-import hashlib
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+from typing import List
 
 from app.database import get_db
 from app.models.csr import CSR
 from app.schemas.csr import CSRCreate, CSRUpdate, CSRResponse
 from app.utils.jwt_dependency import get_current_admin
-from app.utils.file_upload import save_upload_file
-
+from app.utils.csr_file_upload import save_image
 
 router = APIRouter(prefix="/csr", tags=["CSR"])
-UPLOAD_DIR = "uploads/csr"
 
 
 # =========================================================
-# Helpers
+# HELPER — Parse DD-MM-YYYY or DD/MM/YYYY
 # =========================================================
-def generate_image_id(path: str) -> str:
-    return hashlib.md5(path.encode()).hexdigest()
+def parse_date(date_str: str):
+    try:
+        date_str = date_str.replace("/", "-")
+        date_obj = datetime.strptime(date_str, "%d-%m-%Y")
+
+        start = date_obj
+        end = date_obj + timedelta(days=1)
+
+        return start, end
+    except ValueError:
+        raise HTTPException(400, "Date must be DD-MM-YYYY or DD/MM/YYYY")
 
 
-def format_response(csr: CSR):
-    """Convert DB images dict → frontend array format"""
-    images = []
-    for slot in ["1", "2", "3", "4"]:
-        path = csr.images.get(slot)
-        if path:
-            images.append({
-                "slot": int(slot),
-                "id": generate_image_id(path),
-                "path": path
-            })
+# =========================================================
+# IMAGE UPLOAD (Single)
+# =========================================================
+@router.post("/upload")
+def upload_images(files: List[UploadFile] = File(...), admin=Depends(get_current_admin)):
+
+    if len(files) == 0:
+        raise HTTPException(400, "No files uploaded")
+
+    uploaded_paths = []
+
+    for file in files:
+        if not file.content_type.startswith("image/"):
+            raise HTTPException(400, f"{file.filename} is not an image")
+
+        path = save_image(file)
+        uploaded_paths.append(path)
 
     return {
-        "id": csr.id,
-        "title": csr.title,
-        "images": images,
-        "is_active": csr.is_active,
-        "created_at": csr.created_at
+        "count": len(uploaded_paths),
+        "paths": uploaded_paths
     }
 
 
 # =========================================================
-# PUBLIC — LIST ALL SECTIONS
+# CREATE — JSON with image paths
 # =========================================================
-@router.get("", response_model=list[CSRResponse])
-def list_csr(db: Session = Depends(get_db)):
-    records = (
-        db.query(CSR)
-        .filter(CSR.is_active == True)
-        .order_by(CSR.created_at.desc())
-        .all()
-    )
-    return [format_response(r) for r in records]
-
-
-# =========================================================
-# PUBLIC — GET SINGLE SECTION
-# =========================================================
-@router.get("/{csr_id}", response_model=CSRResponse)
-def get_csr(csr_id: int, db: Session = Depends(get_db)):
-    csr = db.query(CSR).filter(CSR.id == csr_id, CSR.is_active == True).first()
-
-    if not csr:
-        raise HTTPException(404, "CSR not found")
-
-    return format_response(csr)
-
-
-# =========================================================
-# ADMIN — UPLOAD IMAGE
-# =========================================================
-@router.post("/admin/upload")
-async def upload_csr_image(
-    file: UploadFile = File(...),
-    admin=Depends(get_current_admin)
-):
-    if file.content_type not in ("image/jpeg", "image/png"):
-        raise HTTPException(400, "Only JPG/PNG allowed")
-
-    file_path = save_upload_file(UPLOAD_DIR, file)
-
-    return {
-        "id": generate_image_id(file_path),
-        "path": file_path
-    }
-
-
-# =========================================================
-# ADMIN — CREATE SECTION (MUST HAVE 4 IMAGES)
-# =========================================================
-@router.post("/admin", response_model=CSRResponse)
-def create_csr(data: CSRCreate, db: Session = Depends(get_db), admin=Depends(get_current_admin)):
-
-    if len(data.images) != 4:
-        raise HTTPException(400, "CSR must contain exactly 4 images")
-
-    images_dict = {str(i+1): img for i, img in enumerate(data.images)}
-
-    csr = CSR(title=data.title, images=images_dict)
-
-    db.add(csr)
-    db.commit()
-    db.refresh(csr)
-
-    return format_response(csr)
-
-
-# =========================================================
-# ADMIN — UPDATE TITLE
-# =========================================================
-@router.put("/admin/{csr_id}", response_model=CSRResponse)
-def update_csr(csr_id: int, data: CSRUpdate, db: Session = Depends(get_db), admin=Depends(get_current_admin)):
-
-    csr = db.query(CSR).filter(CSR.id == csr_id).first()
-    if not csr:
-        raise HTTPException(404, "CSR not found")
-
-    if data.title is not None:
-        csr.title = data.title
-
-    db.commit()
-    db.refresh(csr)
-
-    return format_response(csr)
-
-
-# =========================================================
-# ADMIN — REPLACE IMAGE IN SLOT
-# =========================================================
-@router.put("/admin/{csr_id}/image/{slot}", response_model=CSRResponse)
-def replace_image(
-    csr_id: int,
-    slot: int,
-    image_path: str = Query(...),
+@router.post("/admin", response_model=List[CSRResponse])
+def create_sections(
+    data: CSRCreate,
     db: Session = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
-    if slot not in [1,2,3,4]:
-        raise HTTPException(400, "Slot must be between 1-4")
+    post_time = datetime.utcnow()
+    created = []
 
-    csr = db.query(CSR).filter(CSR.id == csr_id).first()
-    if not csr:
-        raise HTTPException(404, "CSR not found")
-
-    csr.images[str(slot)] = image_path
+    for sec in data.sections:
+        record = CSR(
+            posted_at=post_time,
+            title=sec.title,
+            image1=sec.image1,
+            image2=sec.image2,
+            image3=sec.image3,
+            image4=sec.image4
+        )
+        db.add(record)
+        created.append(record)
 
     db.commit()
-    db.refresh(csr)
 
-    return format_response(csr)
+    for r in created:
+        db.refresh(r)
+
+    return created
 
 
 # =========================================================
-# ADMIN — REMOVE IMAGE FROM SLOT (ONLY DB)
+# GET — BY DATE (DD-MM-YYYY)
 # =========================================================
-@router.delete("/admin/{csr_id}/image/{slot}")
-def remove_image(csr_id: int, slot: int, db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+@router.get("/date/{date}", response_model=List[CSRResponse])
+def get_by_date(date: str, db: Session = Depends(get_db)):
+    start, end = parse_date(date)
 
-    if slot not in [1,2,3,4]:
-        raise HTTPException(400, "Slot must be between 1-4")
+    records = (
+        db.query(CSR)
+        .filter(CSR.posted_at >= start, CSR.posted_at < end)
+        .order_by(CSR.posted_at.desc())
+        .all()
+    )
 
-    csr = db.query(CSR).filter(CSR.id == csr_id).first()
-    if not csr:
-        raise HTTPException(404, "CSR not found")
+    if not records:
+        raise HTTPException(404, "No activities found for this date")
 
-    csr.images[str(slot)] = None
+    return records
+
+
+# =========================================================
+# GET — SINGLE BY ID
+# =========================================================
+@router.get("/{section_id}", response_model=CSRResponse)
+def get_by_id(section_id: int, db: Session = Depends(get_db)):
+    record = db.query(CSR).filter(CSR.id == section_id).first()
+    if not record:
+        raise HTTPException(404, "Activity not found")
+    return record
+
+
+# =========================================================
+# GET — ALL
+# =========================================================
+@router.get("", response_model=List[CSRResponse])
+def get_all(db: Session = Depends(get_db)):
+    return db.query(CSR).order_by(CSR.posted_at.desc()).all()
+
+
+# =========================================================
+# UPDATE — BY ID
+# =========================================================
+@router.put("/admin/{section_id}", response_model=CSRResponse)
+def update(
+    section_id: int,
+    data: CSRUpdate,
+    db: Session = Depends(get_db),
+    admin=Depends(get_current_admin)
+):
+    record = db.query(CSR).filter(CSR.id == section_id).first()
+    if not record:
+        raise HTTPException(404, "Activity not found")
+
+    for field, value in data.dict(exclude_unset=True).items():
+        setattr(record, field, value)
+
     db.commit()
-
-    return {"message": f"Image removed from slot {slot}"}
+    db.refresh(record)
+    return record
 
 
 # =========================================================
-# ADMIN — SOFT DELETE SECTION (HIDE FROM WEBSITE)
+# DELETE — BY ID
 # =========================================================
-@router.delete("/admin/{csr_id}")
-def soft_delete_csr(csr_id: int, db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+@router.delete("/admin/{section_id}")
+def delete(
+    section_id: int,
+    db: Session = Depends(get_db),
+    admin=Depends(get_current_admin)
+):
+    record = db.query(CSR).filter(CSR.id == section_id).first()
+    if not record:
+        raise HTTPException(404, "Activity not found")
 
-    csr = db.query(CSR).filter(CSR.id == csr_id).first()
-    if not csr:
-        raise HTTPException(404, "CSR not found")
-
-    csr.is_active = False
+    db.delete(record)
     db.commit()
-
-    return {"message": "CSR hidden successfully"}
+    return {"message": "Activity deleted"}
 
 
 # =========================================================
-# ADMIN — PERMANENT DELETE (REMOVE FILES + DB)
+# DELETE — BY DATE
 # =========================================================
-@router.delete("/admin/{csr_id}/permanent")
-def permanent_delete(csr_id: int, db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+@router.delete("/admin/date/{date}")
+def delete_by_date(
+    date: str,
+    db: Session = Depends(get_db),
+    admin=Depends(get_current_admin)
+):
+    start, end = parse_date(date)
 
-    csr = db.query(CSR).filter(CSR.id == csr_id).first()
-    if not csr:
-        raise HTTPException(404, "CSR not found")
+    records = db.query(CSR).filter(CSR.posted_at >= start, CSR.posted_at < end).all()
+    if not records:
+        raise HTTPException(404, "No activities found")
 
-    # delete images from disk
-    for path in csr.images.values():
-        if path:
-            full_path = os.path.join(os.getcwd(), path)
-            if os.path.exists(full_path):
-                os.remove(full_path)
+    count = len(records)
 
-    db.delete(csr)
+    for record in records:
+        db.delete(record)
+
     db.commit()
+    return {"message": f"Deleted {count} activities from {date}"}
 
-    return {"message": "CSR permanently deleted"}
+
+# =========================================================
+# DELETE — ALL (Admin)
+# =========================================================
+@router.delete("/admin/all")
+def delete_all(db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+    count = db.query(CSR).delete()
+    db.commit()
+    return {"message": f"Deleted {count} activities"}

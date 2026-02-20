@@ -1,31 +1,31 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from datetime import datetime
 from typing import List, Optional
 
 
-# Image object returned to frontend
-class CSRImage(BaseModel):
-    id: str
-    path: str
+class CSRBase(BaseModel):
+    title: str
+    image1: str
+    image2: str
+    image3: str
+    image4: str
 
 
 class CSRCreate(BaseModel):
-    title: str
-    images: List[str] = Field(default_factory=list)   # still send paths
+    sections: List[CSRBase]
 
 
 class CSRUpdate(BaseModel):
     title: Optional[str] = None
-    images: Optional[List[str]] = None
-    is_active: Optional[bool] = None
+    image1: Optional[str] = None
+    image2: Optional[str] = None
+    image3: Optional[str] = None
+    image4: Optional[str] = None
 
 
-class CSRResponse(BaseModel):
+class CSRResponse(CSRBase):
     id: int
-    title: str
-    images: List[CSRImage]
-    is_active: bool
-    created_at: datetime
+    posted_at: datetime
 
     class Config:
         from_attributes = True
