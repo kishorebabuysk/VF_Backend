@@ -6,7 +6,7 @@ class OnboardingNominee(Base):
     __tablename__ = "onboarding_nominees"
     
     id = Column(Integer, primary_key=True, index=True)
-    nominee_type = Column(String(255), nullable=False)  # PF / ESI / Accident
+    nominee_type = Column(String(255), nullable=False)
     name = Column(String(255), nullable=False)
     age = Column(Integer, nullable=True)
     dob = Column(Date, nullable=False)
@@ -47,7 +47,7 @@ class OnboardingReference(Base):
     phone = Column(String(255), nullable=False)
     email = Column(String(255), nullable=True)
     last_employer = Column(String(255), nullable=False)
-    relationship_with_candidate = Column(String(255), nullable=False)  # RENAMED to avoid conflict
+    relationship_with_candidate = Column(String(255), nullable=False)
     
     onboarding_id = Column(Integer, ForeignKey("onboarding.id"))
     onboarding = relationship("Onboarding", back_populates="references")

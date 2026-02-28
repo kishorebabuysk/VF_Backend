@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/csr", tags=["CSR"])
 
 
 # =========================================================
-# HELPER — Parse DD-MM-YYYY or DD/MM/YYYY
+# HELPER — Parse
 # =========================================================
 def parse_date(date_str: str):
     try:
@@ -29,63 +29,81 @@ def parse_date(date_str: str):
 
 
 # =========================================================
-# IMAGE UPLOAD (Single)
-# =========================================================
-@router.post("/upload")
-def upload_images(files: List[UploadFile] = File(...), admin=Depends(get_current_admin)):
-
-    if len(files) == 0:
-        raise HTTPException(400, "No files uploaded")
-
-    uploaded_paths = []
-
-    for file in files:
-        if not file.content_type.startswith("image/"):
-            raise HTTPException(400, f"{file.filename} is not an image")
-
-        path = save_image(file)
-        uploaded_paths.append(path)
-
-    return {
-        "count": len(uploaded_paths),
-        "paths": uploaded_paths
-    }
-
-
-# =========================================================
 # CREATE — JSON with image paths
 # =========================================================
 @router.post("/admin", response_model=List[CSRResponse])
-def create_sections(
-    data: CSRCreate,
+async def create_sections(
+    request: Request,
     db: Session = Depends(get_db),
-    admin=Depends(get_current_admin)
+    admin=Depends(get_current_admin),
+    titles: List[str] = Form(...),
+    files: List[UploadFile] = File(...),
 ):
     post_time = datetime.utcnow()
-    created = []
 
-    for sec in data.sections:
+    # 🔥 Fix 1: Support comma-separated titles from Swagger
+    if len(titles) == 1 and "," in titles[0]:
+        titles = [t.strip() for t in titles[0].split(",") if t.strip()]
+
+    # 🔥 Validate titles
+    if not titles:
+        raise HTTPException(status_code=400, detail="At least one title required")
+
+    # 🔥 Validate files
+    if not files:
+        raise HTTPException(status_code=400, detail="Images required")
+
+    # 🔥 Validate 4 images per section
+    expected_images = len(titles) * 4
+
+    if len(files) != expected_images:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Each section needs 4 images (expected {expected_images})"
+        )
+
+    created_records = []
+    file_index = 0
+
+    for title in titles:
+        uploaded_paths = []
+
+        for _ in range(4):
+            file = files[file_index]
+
+            # 🔥 Validate image type
+            if not file.content_type.startswith("image/"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{file.filename} is not a valid image"
+                )
+
+            path = save_image(file)
+            uploaded_paths.append(path)
+            file_index += 1
+
         record = CSR(
             posted_at=post_time,
-            title=sec.title,
-            image1=sec.image1,
-            image2=sec.image2,
-            image3=sec.image3,
-            image4=sec.image4
+            title=title,
+            image1=uploaded_paths[0],
+            image2=uploaded_paths[1],
+            image3=uploaded_paths[2],
+            image4=uploaded_paths[3],
         )
+
         db.add(record)
-        created.append(record)
+        created_records.append(record)
 
     db.commit()
 
-    for r in created:
-        db.refresh(r)
+    for record in created_records:
+        db.refresh(record)
 
-    return created
+    return created_records
 
 
 # =========================================================
-# GET — BY DATE (DD-MM-YYYY)
+# GET — BY DATE
 # =========================================================
 @router.get("/date/{date}", response_model=List[CSRResponse])
 def get_by_date(date: str, db: Session = Depends(get_db)):

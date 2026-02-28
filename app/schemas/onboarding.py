@@ -2,6 +2,30 @@ from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from datetime import date, datetime
 from typing import List, Optional
 
+# Personal Create
+class OnboardingPersonalCreate(BaseModel):
+    name: str
+    dob: date
+    marital_status: Optional[str] = None
+    gender: str
+    aadhar_number: str
+    father_name: Optional[str] = None
+    mother_name: Optional[str] = None
+    spouse_name: Optional[str] = None
+    communication_address: str
+    permanent_address: str
+    landline_number: Optional[str] = None
+    mobile_number: str
+    email: EmailStr
+    blood_group: Optional[str] = None
+    emergency_contact1: str
+    emergency_contact2: Optional[str] = None
+    education_qualification: Optional[str] = None
+    driving_license: Optional[str] = None
+    vehicle_number: Optional[str] = None
+    applied_role: str
+    experience_type: str
+
 # -------- Documents --------
 class DocumentCreate(BaseModel):
     document_type: str
@@ -137,16 +161,16 @@ class OnboardingCreate(BaseModel):
     driving_license: Optional[str] = None
     vehicle_number: Optional[str] = None
     applied_role: str
-    experience_type: str  # fresher / experienced
+    experience_type: str
     
-    # Nested
+
     documents: Optional[List[DocumentCreate]] = []
-    nominees: List[NomineeCreate]  # Multiple PF, ESI, Accident nominees
-    family: List[FamilyCreate]  # Multiple family members
+    nominees: List[NomineeCreate]
+    family: List[FamilyCreate]
     bank: BankCreate
-    references: List[ReferenceCreate]  # Multiple references
+    references: List[ReferenceCreate]
     checklist: ChecklistCreate
-    experience_details: Optional[ExperienceDetailsCreate] = None  # Only for experienced
+    experience_details: Optional[ExperienceDetailsCreate] = None
     
     @model_validator(mode="after")
     def validate_experienced_fields(self):
